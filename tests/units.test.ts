@@ -4,6 +4,8 @@ import { canonicalize } from "../src/canonical.js";
 import { args_hash, new_session_id } from "../src/hash.js";
 import { decide_outcome, type CallSlot } from "../src/outcome.js";
 import { resolve_options, DEFAULT_ENDPOINT } from "../src/options.js";
+import { SDK_NAME, SDK_VERSION } from "../src/version.js";
+import { readFile } from "node:fs/promises";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -148,5 +150,20 @@ describe("resolve_options", () => {
   it("is on by default", () => {
     expect(resolve_options({ key: "k" }).enabled).toBe(true);
     expect(resolve_options({ key: "k" }).debug).toBe(false);
+  });
+});
+
+describe("the reported SDK version", () => {
+  it("is the version this package publishes as", async () => {
+    // `SDK_VERSION` is a constant rather than a read of the manifest, because
+    // this file is bundled into both an ESM and a CJS artefact and neither
+    // `import.meta.url` nor `__dirname` exists in both. The constant is safe
+    // only if something fails when it drifts, so this is that something.
+    const manifest = JSON.parse(
+      await readFile(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { name: string; version: string };
+
+    expect(SDK_VERSION).toBe(manifest.version);
+    expect(SDK_NAME).toBe(manifest.name);
   });
 });

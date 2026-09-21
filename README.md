@@ -68,6 +68,8 @@ creation.
 |---|---|---|
 | `key` | — | Ingest key, `mp_live_…`. Without one the SDK does nothing. |
 | `debug` | `false` | Log what is sent, to **stderr** — never stdout, which is the transport. |
+| `agree` | off | Fields that more than one tool returns. See below. |
+| `agreeOptions` | — | `windowMs` (5 min) and `tolerance` (0.0001) for `agree`. |
 
 ```ts
 watch(server, {
@@ -75,6 +77,81 @@ watch(server, {
   debug: true,
 });
 ```
+
+### Cross-tool agreement
+
+Opt-in, and it catches the failure every other metric here calls healthy.
+
+Two tools return the same underlying field. A stale cache key, or a versioned
+key a cron did not follow, and they disagree for hours. Every number stays green
+the whole time — the calls succeed, the results are non-empty, there are no
+retries and the latency is fine. Callers get two different answers to one
+question and nothing reports it.
+
+Name the value once, and say where each tool returns it:
+
+```ts
+watch(server, {
+  key: process.env.MCPULSE_KEY ?? "",
+  agree: {
+    global_liquidity: [
+      { tool: "getGlobalLiquidity", path: "globalLiquidity.value_t" },
+      { tool: "getPillars",         path: "pillars.global_liquidity.value" },
+    ],
+    vix: [
+      { tool: "getVix",     path: "vix.value" },
+      { tool: "getPillars", path: "pillars.vix.value" },
+    ],
+  },
+  agreeOptions: {
+    windowMs: 300_000,   // how long a value stays comparable
+    tolerance: 0.0001,   // relative, for floats
+  },
+});
+```
+
+A map rather than a list of field names, because the same value routinely ships
+under a different name and a different shape in each tool — which is most of why
+two copies of it drift apart without anyone noticing.
+
+**The comparison happens in your process, and only the verdict is sent.**
+
+```json
+{
+  "v": 1,
+  "type": "agreement",
+  "session_id": "s_7f2a91",
+  "field": "global_liquidity",
+  "tool_a": "getGlobalLiquidity",
+  "tool_b": "getPillars",
+  "agreed": false,
+  "checked_at": "2026-09-11T14:22:31Z",
+  "window_ms": 300000
+}
+```
+
+No value, no difference, no hash of a value. Hashing could not work anyway:
+`25.22`, `25.220` and `"25.22"` are the same number and three different hashes,
+so a server-side check would report every representation change as a divergence
+forever. Comparing numerically needs the values, and comparing them where they
+already are is the only way to have both.
+
+Four things worth knowing before turning it on:
+
+- **`windowMs` must be shorter than your data's refresh interval.** A window
+  that outlives a refresh compares a figure against its own predecessor and
+  calls a legitimate change a divergence. It also has to be long enough that
+  both tools are plausibly called inside it.
+- **Integers and strings are compared exactly.** `tolerance` is relative and
+  applies to floats only — a count that is off by one is off by one.
+- **Nothing is reported until both tools have been called inside one window.**
+  A low-traffic tool can stay silently wrong for a long time, which is a limit
+  of the method rather than a clean result. Run once with `debug: true` after
+  setting it up: a path that never resolves says so there, which is how a typo'd
+  declaration shows up as something other than a passing check.
+- **The path is searched in `structuredContent`, in the JSON of a text content
+  part, and in the result itself**, so it does not matter which envelope your
+  tool returns.
 
 ## What leaves your process
 

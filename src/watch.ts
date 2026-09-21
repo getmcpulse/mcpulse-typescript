@@ -1,3 +1,4 @@
+import type { AgreementTracker } from "./agree.js";
 import type { PayloadBuffer } from "./buffer.js";
 import { is_empty_result } from "./empty.js";
 import { args_hash } from "./hash.js";
@@ -15,6 +16,13 @@ import {
 } from "./server-shapes.js";
 import { patch_set_request_handler, wrap_handler } from "./patch.js";
 import { collect_tools, patch_registration, wrap_registered_tools } from "./tools.js";
+import {
+  SDK_NAME,
+  SDK_VERSION,
+  mcp_sdk_version,
+  transport_of,
+  type Transport,
+} from "./version.js";
 import { WIRE_VERSION } from "./types.js";
 import { stream_for } from "./session.js";
 
@@ -106,7 +114,20 @@ function attach(
     const name = request?.params?.clientInfo?.name;
     if (typeof name === "string" && name.length > 0) stream.client_name = name.slice(0, 128);
 
-    void send_startup(low, buffer, session_id, stream.client_name, log);
+    // Read here rather than at `watch()`: the transport is attached when the
+    // server connects, which on an HTTP server is after `watch()` has run, and
+    // the negotiated protocol version exists nowhere else.
+    const protocol = (request?.params as { protocolVersion?: unknown } | undefined)
+      ?.protocolVersion;
+
+    void send_startup(low, buffer, session_id, stream.client_name, options.policy, log, {
+      transport: transport_of(low),
+      protocol_version: typeof protocol === "string" ? protocol.slice(0, 32) : null,
+      // Read off the tracker rather than the options, so what is reported as
+      // declared is what actually resolved — a field naming only one tool never
+      // becomes a tracker entry, and must not be reported as covered.
+      agree_declared: stream.agreement?.declared(),
+    });
     return result;
   });
 
@@ -114,7 +135,16 @@ function attach(
     wrap_handler(low, TOOLS_CALL, (original) => (request, extra) => {
       const slot: CallSlot = { handler_ran: false, outcome: null };
       return run_in_slot(slot, () =>
-        record_call(original, request, extra, slot, buffer, session_id, () => stream.client_name),
+        record_call(
+          original,
+          request,
+          extra,
+          slot,
+          buffer,
+          session_id,
+          () => stream.client_name,
+          stream.agreement,
+        ),
       );
     });
 
@@ -141,6 +171,7 @@ async function record_call(
   buffer: PayloadBuffer,
   session_id: string,
   client_name: () => string,
+  agreement: AgreementTracker | null,
 ): Promise<unknown> {
   const started_at = new Date().toISOString();
   const started = Date.now();
@@ -157,13 +188,14 @@ async function record_call(
   } finally {
     try {
       const outcome = decide_outcome(slot, result, threw);
+      const tool_name = String(request?.params?.name ?? "unknown").slice(0, 200);
 
       buffer.add({
         v: WIRE_VERSION,
         type: "call",
         session_id,
         client_name: client_name(),
-        tool_name: String(request?.params?.name ?? "unknown").slice(0, 200),
+        tool_name,
         started_at,
         duration_ms: Math.max(0, Date.now() - started),
         outcome,
@@ -172,6 +204,15 @@ async function record_call(
         is_empty: outcome === "ok" && is_empty_result(result),
         args_hash: args_hash(request?.params?.arguments),
       });
+
+      // Only a call that returned something has a value worth comparing: a
+      // crash has no result, and an error result is a message rather than the
+      // figure the declaration named. Synchronous, and inside the same guard
+      // as everything else here — a divergence check must never be the reason
+      // a tool call fails.
+      if (outcome === "ok" && agreement) {
+        agreement.observe(tool_name, result, Date.now(), (verdict) => buffer.add(verdict));
+      }
     } catch {
       /* Recording must never be the reason a tool call fails. */
     }
@@ -183,18 +224,34 @@ async function send_startup(
   buffer: PayloadBuffer,
   session_id: string,
   client_name: string,
+  policy: ReturnType<typeof resolve_options>["policy"],
   log: Log,
+  environment: {
+    transport: Transport;
+    protocol_version: string | null;
+    agree_declared?: Array<{ field: string; tools: string[] }>;
+  },
 ): Promise<void> {
   try {
-    const tools = await collect_tools(low);
+    const tools = await collect_tools(low, policy);
     buffer.add({
       v: WIRE_VERSION,
       type: "startup",
       session_id,
       client_name,
+      sdk: `${SDK_NAME}@${SDK_VERSION}`,
+      mcp_sdk_version: mcp_sdk_version(),
+      transport: environment.transport,
+      protocol_version: environment.protocol_version,
+      ...(environment.agree_declared ? { agree_declared: environment.agree_declared } : {}),
       tools: tools.slice(0, 500),
     });
-    log(`startup: ${tools.length} tools, client ${client_name}`);
+    const declared = tools.filter((tool) => tool.policy).length;
+    log(
+      `startup: ${tools.length} tools, client ${client_name}, ` +
+        `transport ${environment.transport}` +
+        (declared ? `, ${declared} with a declared policy` : ""),
+    );
   } catch (error) {
     log("could not read the tool list", error);
   }

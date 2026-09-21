@@ -1,4 +1,6 @@
+import { fingerprint } from "./describe.js";
 import { current_slot, has_error_flag } from "./outcome.js";
+import { policy_for, type PolicyMap, type WirePolicy } from "./policy.js";
 import {
   TOOLS_LIST,
   type HighLevelServer,
@@ -108,9 +110,19 @@ function patch_update(handle: unknown, server: HighLevelServer, name: string | u
  * Asking the server's own `tools/list` handler is the only way to get that —
  * it is the code that does the conversion.
  */
+export interface CollectedTool {
+  name: string;
+  schema_bytes: number;
+  schema_hash: string;
+  description_hash: string;
+  description_norm: string;
+  policy: WirePolicy | null;
+}
+
 export async function collect_tools(
   low: LowLevelServer,
-): Promise<Array<{ name: string; schema_bytes: number }>> {
+  policy?: PolicyMap,
+): Promise<CollectedTool[]> {
   const handler = low._requestHandlers?.get(TOOLS_LIST);
   if (!handler) return [];
 
@@ -123,7 +135,19 @@ export async function collect_tools(
   return result.tools.flatMap((tool) => {
     const name = (tool as { name?: unknown })?.name;
     if (typeof name !== "string" || name.length === 0) return [];
-    return [{ name, schema_bytes: JSON.stringify(tool)?.length ?? 0 }];
+
+    // Hashed from the same object the byte count is taken from — the tool list
+    // as the client will actually see it, after the SDK has converted whatever
+    // the author declared. Hashing the Zod schema instead would report churn
+    // every time a refactor changed the declaration without changing the wire.
+    return [
+      {
+        name,
+        schema_bytes: JSON.stringify(tool)?.length ?? 0,
+        ...fingerprint(tool as { description?: unknown; inputSchema?: unknown }),
+        policy: policy_for(policy, name),
+      },
+    ];
   });
 }
 

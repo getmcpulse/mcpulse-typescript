@@ -35,8 +35,14 @@ export function args_hash(args: unknown): string {
   }
 }
 
-/** The first 12 hex characters of the SHA-256 of a UTF-8 string. */
-function sha256_12(text: string): string {
+/**
+ * The first 12 hex characters of the SHA-256 of a UTF-8 string.
+ *
+ * Exported because the description and schema fingerprints in `describe.ts` are
+ * the same hash over a different input, and two spellings of one hash function
+ * in one package is how they drift apart.
+ */
+export function sha256_12(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex").slice(0, 12);
 }
 

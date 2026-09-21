@@ -1,3 +1,4 @@
+import { AgreementTracker, resolve_agree } from "./agree.js";
 import { PayloadBuffer } from "./buffer.js";
 import { register_exit_flush } from "./exit.js";
 import { new_session_id } from "./hash.js";
@@ -41,6 +42,21 @@ export interface Stream {
    * occasionally the other client's beats a column that is always "unknown".
    */
   client_name: string;
+  /**
+   * Cross-tool agreement, when `watch()` was given a declaration. `null` when
+   * it was not, which is the ordinary case.
+   *
+   * Here rather than in `attach()` for the reason the session id is here: an
+   * HTTP server builds a fresh `McpServer` per request, so a tracker made per
+   * `watch()` would only ever see one tool call and could never compare
+   * anything with anything.
+   *
+   * The first declaration wins, like the session id. Two `watch()` calls in
+   * one process reporting to the same MCP with different `agree` maps is a
+   * mistake rather than a request for two trackers, and picking the first is
+   * the same answer the session already gives.
+   */
+  agreement: AgreementTracker | null;
 }
 
 const streams = new Map<string, Stream>();
@@ -53,10 +69,14 @@ export function stream_for(
 
   let stream = streams.get(key);
   if (!stream) {
+    const session_id = new_session_id();
+    const agree = resolve_agree(options.agree, options.agreeOptions, log);
+
     stream = {
-      session_id: new_session_id(),
+      session_id,
       buffer: new PayloadBuffer(options, log),
       client_name: "unknown",
+      agreement: agree ? new AgreementTracker(agree, session_id, log) : null,
     };
     streams.set(key, stream);
     register_exit_flush(stream.buffer);

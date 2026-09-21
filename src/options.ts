@@ -1,3 +1,6 @@
+import type { AgreeOptions, AgreementMap } from "./agree.js";
+import type { PolicyMap } from "./policy.js";
+
 /** Everything `watch()` accepts, and what it means when you leave it out. */
 export interface WatchOptions {
   /** Ingest key, `mp_live_…`. Minted per MCP in the dashboard. */
@@ -8,6 +11,59 @@ export interface WatchOptions {
   enabled?: boolean;
   /** Log what is being sent, and why a send failed, to stderr. */
   debug?: boolean;
+  /**
+   * Opt-in: the fields more than one tool returns, and where each returns
+   * them. When two of those tools report the same field inside the window, the
+   * values are compared in this process and only the verdict is sent.
+   *
+   * ```ts
+   * agree: {
+   *   // the long form, when this field needs its own freshness bar
+   *   global_liquidity: {
+   *     sources: [
+   *       { tool: "getGlobalLiquidity", path: "globalLiquidity.value_t" },
+   *       { tool: "getPillars",         path: "pillars.global_liquidity.value" },
+   *     ],
+   *     windowMs: 30_000,
+   *     tolerance: 0.0001,
+   *   },
+   *   // the short form, when the defaults are right
+   *   vix: [
+   *     { tool: "getVix",     path: "vix.last" },
+   *     { tool: "getPillars", path: "pillars.vix.value" },
+   *   ],
+   * }
+   * ```
+   *
+   * A map rather than a list of field names, because the same value routinely
+   * ships under a different name and shape in each tool — which is most of why
+   * two copies of it drift apart unnoticed.
+   *
+   * `windowMs` and `tolerance` are per field, falling back to `agreeOptions`.
+   * A single global window cannot be right on a server returning more than one
+   * kind of number: a quote 30 seconds old is fine for a chat answer and fatal
+   * for a trade. See `agree.ts`.
+   */
+  agree?: AgreementMap;
+  /** Window and tolerance for the check above. Both have defaults. */
+  agreeOptions?: AgreeOptions;
+  /**
+   * Opt-in: tools a client will refuse to offer until some precondition holds.
+   *
+   * ```ts
+   * policy: {
+   *   delete_account: { requiresAuthorization: true },
+   *   transfer_funds: { requiresVerifiedIdentity: true },
+   * }
+   * ```
+   *
+   * A tool declared here is excluded from every discoverability metric — dead
+   * tools, first-call success, the starving-siblings detector. Without it, a
+   * model correctly declining to call a dangerous tool reads as poor
+   * discoverability, and the advice that follows makes the server less safe.
+   * See `policy.ts`.
+   */
+  policy?: PolicyMap;
 }
 
 export interface ResolvedOptions {
@@ -15,6 +71,9 @@ export interface ResolvedOptions {
   endpoint: string;
   enabled: boolean;
   debug: boolean;
+  agree?: AgreementMap;
+  agreeOptions?: AgreeOptions;
+  policy?: PolicyMap;
 }
 
 /**
@@ -61,5 +120,8 @@ export function resolve_options(options: WatchOptions): ResolvedOptions {
     endpoint: (options?.endpoint ?? DEFAULT_ENDPOINT).replace(/\/$/, ""),
     enabled: (options?.enabled ?? true) && key.length > 0,
     debug: options?.debug ?? false,
+    agree: options?.agree,
+    agreeOptions: options?.agreeOptions,
+    policy: options?.policy,
   };
 }

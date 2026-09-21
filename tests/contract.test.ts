@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { WIRE_VERSION, type CallPayload, type Outcome, type StartupPayload } from "../src/types.js";
+import {
+  WIRE_VERSION,
+  type AgreementPayload,
+  type CallPayload,
+  type Outcome,
+  type StartupPayload,
+} from "../src/types.js";
 
 /**
  * The wire contract, pinned.
@@ -28,7 +34,50 @@ const CALL_FIELDS = [
   "args_hash",
 ] as const;
 
-const STARTUP_FIELDS = ["v", "type", "session_id", "client_name", "tools"] as const;
+const STARTUP_FIELDS = [
+  "v",
+  "type",
+  "session_id",
+  "client_name",
+  // Which SDK, whose MCP SDK, and over what. The wire-mapping table is keyed on
+  // the last two: how a thrown error reaches the client is a property of the
+  // version and the transport, so a row without them cannot have it applied.
+  "sdk",
+  "mcp_sdk_version",
+  "transport",
+  "protocol_version",
+  "tools",
+] as const;
+
+/**
+ * Per tool. Three hashes rather than one, because "did this change" and "is
+ * this the same description" are different questions and an exact hash only
+ * answers the first.
+ */
+const STARTUP_TOOL_FIELDS = [
+  "name",
+  "schema_bytes",
+  "schema_hash",
+  "description_hash",
+  "description_norm",
+  "policy",
+] as const;
+
+/**
+ * The opt-in cross-tool agreement verdict. No `client_name`: a divergence is a
+ * property of the server's own data, not of who happened to ask for it.
+ */
+const AGREEMENT_FIELDS = [
+  "v",
+  "type",
+  "session_id",
+  "field",
+  "tool_a",
+  "tool_b",
+  "agreed",
+  "checked_at",
+  "window_ms",
+] as const;
 
 const OUTCOMES: Outcome[] = ["ok", "bad_args", "tool_error", "crashed"];
 
@@ -62,11 +111,40 @@ describe("wire contract", () => {
       type: "startup",
       session_id: "s_abc",
       client_name: "claude-desktop",
-      tools: [{ name: "search_orders", schema_bytes: 480 }],
+      sdk: "@mcpulse/sdk@0.1.6",
+      mcp_sdk_version: "1.30.0",
+      transport: "stdio",
+      protocol_version: "2025-06-18",
+      tools: [
+        {
+          name: "search_orders",
+          schema_bytes: 480,
+          schema_hash: "9c1b4e2f0a11",
+          description_hash: "44136fa355b3",
+          description_norm: "4f53cda18c2b",
+          policy: null,
+        },
+      ],
     };
 
     expect(Object.keys(payload).sort()).toEqual([...STARTUP_FIELDS].sort());
-    expect(Object.keys(payload.tools[0]!).sort()).toEqual(["name", "schema_bytes"]);
+    expect(Object.keys(payload.tools[0]!).sort()).toEqual([...STARTUP_TOOL_FIELDS].sort());
+  });
+
+  it("sends exactly the fields an agreement payload is defined to have", () => {
+    const payload: AgreementPayload = {
+      v: WIRE_VERSION,
+      type: "agreement",
+      session_id: "s_abc",
+      field: "global_liquidity",
+      tool_a: "getGlobalLiquidity",
+      tool_b: "getPillars",
+      agreed: false,
+      checked_at: "2026-09-11T14:22:31.000Z",
+      window_ms: 300_000,
+    };
+
+    expect(Object.keys(payload).sort()).toEqual([...AGREEMENT_FIELDS].sort());
   });
 
   it("knows all four outcomes and no others", () => {
@@ -77,8 +155,29 @@ describe("wire contract", () => {
   it("carries no field that could hold customer data", () => {
     // The rule that lets an MCP author pass a security review. Adding
     // `arguments` or `result` here would break it, and it cannot be un-broken.
-    const forbidden = ["arguments", "args", "result", "content", "input", "output", "params"];
-    for (const field of [...CALL_FIELDS, ...STARTUP_FIELDS]) {
+    //
+    // The agreement payload is the one that had to be *designed* around this
+    // rather than merely checked against it: the obvious way to report a
+    // divergence is to say what the two values were. So `value`, `values` and
+    // `difference` are forbidden here too, and `hash` beside them — a hash of
+    // a figure is a figure that is only awkward to read.
+    const forbidden = [
+      "arguments",
+      "args",
+      "result",
+      "content",
+      "input",
+      "output",
+      "params",
+      "value",
+      "values",
+      "value_a",
+      "value_b",
+      "difference",
+      "delta",
+      "hash",
+    ];
+    for (const field of [...CALL_FIELDS, ...STARTUP_FIELDS, ...AGREEMENT_FIELDS]) {
       expect(forbidden).not.toContain(field);
     }
   });

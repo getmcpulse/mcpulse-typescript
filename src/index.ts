@@ -20,5 +20,14 @@
 
 export { watch } from "./watch.js";
 export type { WatchOptions } from "./options.js";
-export type { CallPayload, Outcome, Payload, StartupPayload } from "./types.js";
+export type { AgreeOptions, AgreementField, AgreementMap, AgreementSite } from "./agree.js";
+export type { PolicyMap, ToolPolicy } from "./policy.js";
+export { SDK_NAME, SDK_VERSION } from "./version.js";
+export type {
+  AgreementPayload,
+  CallPayload,
+  Outcome,
+  Payload,
+  StartupPayload,
+} from "./types.js";
 export { WIRE_VERSION } from "./types.js";
