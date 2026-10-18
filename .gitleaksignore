@@ -1,0 +1,6 @@
+# Checked by hand.
+# An old test key: "0123456789abcdef" twice — not a key that was ever issued.
+22edf75f4c69032ba80e5839e8239a8d7338c766:tests/watch.test.ts:mcpulse-ingest-key:18
+# Tool *names* in the stem fixture (e.g. "gettwitterpostretweet") that the Twitter rule reads as a key.
+08f3a35602e76818372bd16144dc03e6eb9dca0c:tests/fixtures/stem.json:twitter-api-key:5199
+08f3a35602e76818372bd16144dc03e6eb9dca0c:tests/fixtures/stem.json:twitter-api-key:5201

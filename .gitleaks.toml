@@ -1,0 +1,16 @@
+# Secret scanning: gitleaks' default rules plus MCPulse's key formats.
+# CI scans the full history. Allowlist specific fake values, never whole paths.
+title = "mcpulse-typescript"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "mcpulse-ingest-key"
+description = "MCPulse ingest API key"
+regex = '''mp_live_[A-Za-z0-9]{32}'''
+keywords = ["mp_live_"]
+
+[[allowlists]]
+description = "Placeholders: too short to be a key (real ones have 32 characters), all x, or counter-padded test keys"
+regexes = ['''^mp_live_[A-Za-z0-9]{0,31}$''', '''^mp_live_x{32}$''', '''^mp_live_0{20,}[0-9]*$''']
